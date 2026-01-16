@@ -19,10 +19,12 @@ namespace Test1.Controllers
             _sessionFactory = sessionFactory;
         }
 
+        // GET: api/members
         [HttpGet]
         public async Task<ActionResult<IEnumerable<MemberDto>>> List(CancellationToken cancellationToken)
         {
-            await using var dbContext = await _sessionFactory.CreateContextAsync(cancellationToken).ConfigureAwait(false);
+            await using var dbContext = await _sessionFactory.CreateContextAsync(cancellationToken)
+                .ConfigureAwait(false);
 
             const string sql = @"
 SELECT
@@ -45,12 +47,15 @@ FROM ""member"";";
 
             return Ok(rows);
         }
-
+        
+        // GET: api/members
         [HttpPost]
         public async Task<ActionResult> Create([FromBody] CreateMemberDto model, CancellationToken cancellationToken)
         {
-            await using var dbContext = await _sessionFactory.CreateContextAsync(cancellationToken).ConfigureAwait(false);
+            await using var dbContext = await _sessionFactory.CreateContextAsync(cancellationToken)
+                .ConfigureAwait(false);
 
+            //validate
             var error = model.Validate();
             if (error != null)
             {
@@ -58,15 +63,18 @@ FROM ""member"";";
                 return BadRequest(error);
             }
 
+            //ensure account->location exists and fetch keys
             const string verifyAccountSql = @"
 SELECT LocationUid, UID
 FROM account
-WHERE Guid = @Guid;";
+WHERE Guid = @Guid;"; //Gui index would speed up lookup
 
             var accountBuilder = new SqlBuilder();
             var accountTemplate = accountBuilder.AddTemplate(verifyAccountSql, new { Guid = model.AccountGuid });
-            var accountKeys = await dbContext.Session.QueryFirstOrDefaultAsync<CreateMemberKeysDto>(accountTemplate.RawSql, accountTemplate.Parameters, dbContext.Transaction).ConfigureAwait(false);
+            var accountKeys = await dbContext.Session.QueryFirstOrDefaultAsync<CreateMemberKeysDto>(accountTemplate.RawSql, accountTemplate.Parameters, dbContext.Transaction)
+                .ConfigureAwait(false);
 
+            //rollback if location does not exist
             if (accountKeys == null)
             {
                 dbContext.Rollback();
@@ -75,8 +83,11 @@ WHERE Guid = @Guid;";
 
             string sql;
 
+            //A unique partial index on account based on primary would remove the need for this check
             if (model.Primary == 1)
             {
+                /* This query will attempt to insert a primary user using SELECT and 
+                checking for the existence of a primary member under the same account */
                 sql = @"
 INSERT INTO ""member"" (
     Guid, AccountUid, LocationUid, JoinedDateUtc, CreatedUtc, ""Primary"", 
@@ -92,6 +103,7 @@ WHERE NOT EXISTS (
             }
             else
             {
+                /* This query will attempt to insert a non-primary member*/
                 sql = @"
 INSERT INTO ""member"" (
     Guid, AccountUid, LocationUid, JoinedDateUtc, CreatedUtc, ""Primary"", 
@@ -123,6 +135,7 @@ INSERT INTO ""member"" (
 
             var count = await dbContext.Session.ExecuteAsync(sql, parameters, dbContext.Transaction).ConfigureAwait(false);
 
+            //output appropriate error code
             if (count == 0)
             {
                 dbContext.Rollback();
@@ -131,15 +144,17 @@ INSERT INTO ""member"" (
             }
 
             dbContext.Commit();
-
+            //return new member Guid for testing with postman
             return StatusCode(StatusCodes.Status201Created, new { id = newGuid });
         }
 
+        // DELETE: api/members/{Guid}
         [HttpDelete("{id:Guid}")]
         public async Task<ActionResult> DeleteById(Guid id, CancellationToken cancellationToken)
         {
             await using var dbContext = await _sessionFactory.CreateContextAsync(cancellationToken).ConfigureAwait(false);
 
+            //ensure member exists and get keys
             const string GetMemberSql = @"
 SELECT UID, AccountUid, ""Primary""
 FROM ""member""
@@ -149,12 +164,14 @@ WHERE Guid = @Guid;";
             var GetMembertemplate = GetMemberBuilder.AddTemplate(GetMemberSql, new { Guid = id });
             var memberData = await dbContext.Session.QueryFirstOrDefaultAsync<DeleteMemberInfoDto>(GetMembertemplate.RawSql, GetMembertemplate.Parameters, dbContext.Transaction).ConfigureAwait(false);
 
+            //rollback if member doesnt exist
             if (memberData == null)
             {
                 dbContext.Rollback();
                 return NotFound();
             }
 
+            //count memebrs in account
             const string CountMembersSql = @"
 SELECT COUNT(1)
 FROM ""member""
@@ -164,14 +181,17 @@ WHERE AccountUid = @AccountUid;";
             var CountMembertemplate = CountMembersBuilder.AddTemplate(CountMembersSql, new { AccountUid = memberData.AccountUid });
             var MemberCount = await dbContext.Session.QueryFirstOrDefaultAsync<int>(CountMembertemplate.RawSql, CountMembertemplate.Parameters, dbContext.Transaction).ConfigureAwait(false);
 
+            //rollback if only last member
             if (MemberCount == 1)
             {
                 dbContext.Rollback();
                 return BadRequest("Cannot delete last member");
             }
 
+            //this section could be improved with a unique partial index on accountUid based on the Primary field
             if (memberData.Primary == 1)
             {
+                //get next member key
                 const string pickMemberSql = @"
 SELECT UID
 FROM ""member""
@@ -184,12 +204,14 @@ LIMIT 1;";
                 var newPrimaryUid = await dbContext.Session.QueryFirstOrDefaultAsync<int?>(pickMemberTemplate.RawSql, pickMemberTemplate.Parameters, dbContext.Transaction)
                     .ConfigureAwait(false);
 
+                //rollback if next member doesnt exist
                 if (newPrimaryUid == null)
                 {
                     dbContext.Rollback();
                     return Conflict("Member to delete not found");
                 }
 
+                //promote next member to primary
                 const string promoteMemberSql = @"
 UPDATE ""member""
 SET ""Primary"" = CASE WHEN UID = @UID THEN 1 ELSE 0 END
@@ -201,6 +223,7 @@ WHERE AccountUid = @AccountUid;";
                     .ConfigureAwait(false);
             }
 
+            //delete member
             const string DeleteMemberSql = @"
 DELETE FROM ""member""
 WHERE UID = @UID;";
@@ -210,14 +233,15 @@ WHERE UID = @UID;";
             var count = await dbContext.Session.ExecuteAsync(DeleteMemberTemplate.RawSql, DeleteMemberTemplate.Parameters, dbContext.Transaction)
                 .ConfigureAwait(false);
 
+            //rollback if member was not deleted
             if (count != 1)
             {
                 dbContext.Rollback();
-                return NotFound();
+                return BadRequest("Unable to delete member");
             }
 
             dbContext.Commit();
-            return NoContent();
+            return Ok();
         }
     }
 }

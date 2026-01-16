@@ -56,3 +56,16 @@ CREATE TABLE "member" (
   FOREIGN KEY("LocationUid") REFERENCES location("UID"),
   FOREIGN KEY("AccountUid") REFERENCES account("UID")
 );
+
+-- CREATE INDEX locationGuid ON location(Guid)
+
+-- CREATE INDEX accountGuid ON account(Guid)
+
+-- CREATE INDEX memberGuid ON "member"(Guid)
+
+-- CREATE INDEX memberAccountUid ON "member"(AccountUid)
+
+-- CREATE UNIQUE INDEX primaryMemberAccount 
+-- ON "member"(AccountUid) 
+-- WHERE "Primary" = 1
+

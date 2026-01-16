@@ -20,6 +20,7 @@ namespace Test1.Dtos
     public class CreateAccountDto
     {
         public Guid LocationGuid { get; set; }
+        public AccountStatusType Status { get; set; }
         public AccountType AccountType { get; set; }
         public double? PaymentAmount { get; set; }
         public DateTime PeriodStartUtc { get; set; }

@@ -26,7 +26,8 @@ namespace Test1.Controllers
         // GET: api/locations
         [HttpGet]
         public async Task<ActionResult<IEnumerable<LocationDto>>> List(CancellationToken cancellationToken)
-        {
+        {   
+            //Recommendation: Instead of creating a dbContext, we can create an Isession using .CreateSessionAsync to avoid unecessary transactions
             await using var dbContext = await _sessionFactory.CreateContextAsync(cancellationToken)
                 .ConfigureAwait(false);
 
@@ -56,6 +57,7 @@ GROUP BY
     l.PostalCode
 ;";
 
+            //Recommendation: SqlBuilder Unnecessary here
             var builder = new SqlBuilder();
 
             var template = builder.AddTemplate(sql, new
@@ -63,7 +65,6 @@ GROUP BY
                 Inactive = AccountStatusType.CANCELLED
             });
 
-            //dapper multi mapping using dictionary
             var rows = await dbContext.Session.QueryAsync<LocationWithActiveCountDto>(template.RawSql, template.Parameters, dbContext.Transaction
             ).ConfigureAwait(false);
 
@@ -90,6 +91,7 @@ SELECT
 FROM location
 /**where**/;";
 
+            //Recommendation: Sql builder makes sense here for additional filtering in the future
             var builder = new SqlBuilder();
 
             var template = builder.AddTemplate(sql);
@@ -99,11 +101,13 @@ FROM location
                 Guid = id
             });
 
+            //Recommendation: Query FirstOrDefault for single resource
             var rows = await dbContext.Session.QueryAsync<LocationDto>(template.RawSql, template.Parameters, dbContext.Transaction)
                 .ConfigureAwait(false);
 
             dbContext.Commit();
 
+            //Recommendation: Return error code if resource not found
             return Ok(rows.FirstOrDefault()); // Returns an HTTP 200 OK status with the data
         }
 
